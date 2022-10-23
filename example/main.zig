@@ -92,7 +92,7 @@ pub const AndroidApp = struct {
         self.screen_width = @intToFloat(f32, android.ANativeWindow_getWidth(window));
         self.screen_height = @intToFloat(f32, android.ANativeWindow_getHeight(window));
 
-        self.egl = EGLContext.init(window, .gles2) catch |err| blk: {
+        self.egl = EGLContext.init(window, .gles3) catch |err| blk: {
             app_log.err("Failed to initialize EGL for window: {}\n", .{err});
             break :blk null;
         };
@@ -364,21 +364,13 @@ pub const AndroidApp = struct {
         const GLuint = c.GLuint;
 
         var touch_program: GLuint = undefined;
-        var shaded_program: GLuint = undefined;
 
-        var uPos: c.GLint = undefined;
-        var uAspect: c.GLint = undefined;
-        var uIntensity: c.GLint = undefined;
-
-        var uTransform: c.GLint = undefined;
-
-        var genbuffers: c.GLuint = undefined;
+        var vertex_buffer: GLuint = undefined;
 
         const vVertices = [_]c.GLfloat{
             0.0, 0.0,
             1.0, 0.0,
             0.0, 1.0,
-            1.0, 1.0,
         };
 
         while (@atomicLoad(bool, &self.running, .SeqCst)) {
@@ -422,25 +414,9 @@ pub const AndroidApp = struct {
                     try egl.makeCurrent();
 
                     if (self.egl_init) {
-                        c.glGenBuffers(1, &genbuffers);
-                        c.glBindBuffer(c.GL_ARRAY_BUFFER, genbuffers);
+                        c.glGenBuffers(1, &vertex_buffer);
+                        c.glBindBuffer(c.GL_ARRAY_BUFFER, vertex_buffer);
                         c.glBufferData(c.GL_ARRAY_BUFFER, vVertices.len * @sizeOf(c.GLfloat), &vVertices, c.GL_STATIC_DRAW);
-
-                        // Buffer for debug strings
-                        var buf: []u8 = try self.allocator.alloc(u8, 1024);
-                        defer self.allocator.free(buf);
-                        app_log.info(
-                            \\GL Vendor:     {s}
-                            \\GL Renderer:   {s}
-                            \\GL Version:    {s}
-                            // \\GL Extensions: {s}
-                            \\
-                        , .{
-                            std.mem.span(c.glGetString(c.GL_VENDOR)),
-                            std.mem.span(c.glGetString(c.GL_RENDERER)),
-                            std.mem.span(c.glGetString(c.GL_VERSION)),
-                            // std.mem.span(c.glGetString(c.GL_EXTENSIONS)),
-                        });
 
                         c.glEnable(c.GL_DEBUG_OUTPUT);
                         c.glDebugMessageCallback(android.debugMessageCallback, null);
@@ -453,26 +429,17 @@ pub const AndroidApp = struct {
                             var ps_code =
                                 \\#version 300 es
                                 \\in vec2 vPosition;
-                                \\out vec2 uv;
-                                \\out vec4 positionOut;
                                 \\void main() {
-                                \\  uv = vPosition;
-                                \\  positionOut = vec4(2.0 * uv - 1.0, 0.0, 1.0);
+                                \\  gl_Position = vec4(vPosition, 0.0, 1.0);
                                 \\}
                                 \\
                             ;
                             var fs_code =
                                 \\#version 300 es
                                 \\precision mediump float;
-                                \\in vec2 uv;
-                                \\uniform vec2 uPos;
-                                \\uniform float uAspect;
-                                \\uniform float uIntensity;
-                                \\out vec4 colorOut;
+                                \\out vec4 fragColor;
                                 \\void main() {
-                                \\  vec2 rel = uv - uPos;
-                                \\  rel.x *= uAspect;
-                                \\  colorOut = vec4(vec3(pow(uIntensity * clamp(1.0 - 10.0 * length(rel), 0.0, 1.0), 2.2)), 1.0);
+                                \\  fragColor = vec4(0.0, 0.0, 0.0, 1.0);
                                 \\}
                                 \\
                             ;
@@ -483,149 +450,16 @@ pub const AndroidApp = struct {
                             c.glCompileShader(ps);
                             c.glCompileShader(fs);
 
-                            var is_compiled: c.GLint = c.GL_FALSE;
-                            c.glGetShaderiv(ps, c.GL_COMPILE_STATUS, &is_compiled);
-                            if (is_compiled == c.GL_FALSE) {
-                                var max_length: c.GLint = 0;
-                                c.glGetShaderiv(ps, c.GL_INFO_LOG_LENGTH, &max_length);
-                                if (max_length > buf.len) {
-                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
-                                }
-                                c.glGetShaderInfoLog(ps, max_length, &max_length, buf.ptr);
-                                const str = buf[0..@intCast(usize, max_length)];
-                                app_log.err("\n\n\tVertex Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
-                            }
-                            is_compiled = c.GL_FALSE;
-                            c.glGetShaderiv(fs, c.GL_COMPILE_STATUS, &is_compiled);
-                            if (is_compiled == c.GL_FALSE) {
-                                var max_length: c.GLint = 0;
-                                c.glGetShaderiv(fs, c.GL_INFO_LOG_LENGTH, &max_length);
-                                if (max_length > buf.len) {
-                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
-                                }
-                                c.glGetShaderInfoLog(fs, max_length, &max_length, buf.ptr);
-                                const str = buf[0..@intCast(usize, max_length)];
-                                app_log.err("\n\n\tFragment Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
-                            }
-
                             c.glAttachShader(touch_program, ps);
                             c.glAttachShader(touch_program, fs);
 
-                            c.glBindAttribLocation(touch_program, 0, "vPosition");
                             c.glLinkProgram(touch_program);
 
                             c.glDetachShader(touch_program, ps);
                             c.glDetachShader(touch_program, fs);
                         }
 
-                        uPos = c.glGetUniformLocation(touch_program, "uPos");
-                        uAspect = c.glGetUniformLocation(touch_program, "uAspect");
-                        uIntensity = c.glGetUniformLocation(touch_program, "uIntensity");
-
-                        shaded_program = c.glCreateProgram();
-                        {
-                            var ps = c.glCreateShader(c.GL_VERTEX_SHADER);
-                            var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
-
-                            var ps_code =
-                                \\#version 300 es
-                                \\in vec3 vPosition;
-                                \\in vec3 vNormal;
-                                \\uniform mat4 uTransform;
-                                \\out vec3 normal;
-                                \\out vec4 positionOut;
-                                \\void main() {
-                                \\  normal = mat3(uTransform) * vNormal;
-                                \\  positionOut = uTransform * vec4(vPosition, 1.0);
-                                \\}
-                                \\
-                            ;
-                            var fs_code =
-                                \\#version 300 es
-                                \\precision mediump float;
-                                \\in vec3 normal;
-                                \\out vec4 colorOut;
-                                \\void main() {
-                                \\  vec3 base_color = vec3(0.968,0.643,0.113); // #F7A41D
-                                \\  vec3 ldir = normalize(vec3(0.3, 0.4, 2.0));
-                                \\  float l = 0.3 + 0.8 * clamp(-dot(normal, ldir), 0.0, 1.0);
-                                \\  colorOut = vec4(l * base_color,1);
-                                \\}
-                                \\
-                            ;
-
-                            c.glShaderSource(ps, 1, @ptrCast([*c]const [*c]const u8, &ps_code), null);
-                            c.glShaderSource(fs, 1, @ptrCast([*c]const [*c]const u8, &fs_code), null);
-
-                            c.glCompileShader(ps);
-                            c.glCompileShader(fs);
-
-                            var is_compiled: c.GLint = c.GL_FALSE;
-                            c.glGetShaderiv(ps, c.GL_COMPILE_STATUS, &is_compiled);
-                            if (is_compiled == c.GL_FALSE) {
-                                var max_length: c.GLint = 0;
-                                c.glGetShaderiv(ps, c.GL_INFO_LOG_LENGTH, &max_length);
-                                if (max_length > buf.len) {
-                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
-                                }
-                                c.glGetShaderInfoLog(ps, max_length, &max_length, buf.ptr);
-                                const str = buf[0..@intCast(usize, max_length)];
-                                app_log.err("\n\n\tVertex Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
-                            }
-                            is_compiled = c.GL_FALSE;
-                            c.glGetShaderiv(fs, c.GL_COMPILE_STATUS, &is_compiled);
-                            if (is_compiled == c.GL_FALSE) {
-                                var max_length: c.GLint = 0;
-                                c.glGetShaderiv(fs, c.GL_INFO_LOG_LENGTH, &max_length);
-                                if (max_length > buf.len) {
-                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
-                                }
-                                c.glGetShaderInfoLog(fs, max_length, &max_length, buf.ptr);
-                                const str = buf[0..@intCast(usize, max_length)];
-                                app_log.err("\n\n\tFragment Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
-                            }
-
-                            c.glAttachShader(shaded_program, ps);
-                            c.glAttachShader(shaded_program, fs);
-
-                            c.glBindAttribLocation(shaded_program, 0, "vPosition");
-                            c.glBindAttribLocation(shaded_program, 1, "vNormal");
-                            c.glLinkProgram(shaded_program);
-
-                            c.glDetachShader(shaded_program, ps);
-                            c.glDetachShader(shaded_program, fs);
-                        }
-
-                        uTransform = c.glGetUniformLocation(shaded_program, "uTransform");
-
                         self.egl_init = false;
-
-                        {
-                            var is_linked: c.GLint = c.GL_FALSE;
-                            c.glGetProgramiv(touch_program, c.GL_LINK_STATUS, &is_linked);
-                            if (is_linked == c.GL_FALSE) {
-                                var max_length: c.GLint = 0;
-                                c.glGetProgramiv(touch_program, c.GL_INFO_LOG_LENGTH, &max_length);
-                                if (max_length > buf.len) {
-                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
-                                }
-                                c.glGetProgramInfoLog(touch_program, max_length, &max_length, buf.ptr);
-                                const str = buf[0..@intCast(usize, max_length)];
-                                app_log.err("\n\n\tTouch program - is_linked={}\n\t{s}\n", .{ is_linked, str });
-                            }
-
-                            c.glGetProgramiv(shaded_program, c.GL_LINK_STATUS, &is_linked);
-                            if (is_linked == c.GL_FALSE) {
-                                var max_length: c.GLint = 0;
-                                c.glGetProgramiv(touch_program, c.GL_INFO_LOG_LENGTH, &max_length);
-                                if (max_length > buf.len) {
-                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
-                                }
-                                c.glGetProgramInfoLog(touch_program, max_length, &max_length, buf.ptr);
-                                const str = buf[0..@intCast(usize, max_length)];
-                                app_log.err("\n\n\tShaded program - is_linked={}\n\t{s}\n", .{ is_linked, str });
-                            }
-                        }
                     }
 
                     const t = @intToFloat(f32, loop) / 100.0;
@@ -636,66 +470,23 @@ pub const AndroidApp = struct {
                         0.5 + 0.5 * @sin(t + 2.0),
                         1.0,
                     );
-                    c.glClear(c.GL_COLOR_BUFFER_BIT);
+                    c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT);
 
                     c.glUseProgram(touch_program);
 
-                    c.glBindBuffer(c.GL_ARRAY_BUFFER, genbuffers);
+                    c.glBindBuffer(c.GL_ARRAY_BUFFER, vertex_buffer);
+
                     const vPosition = c.glGetAttribLocation(touch_program, "vPosition");
-                    c.glVertexAttribPointer(@intCast(c.GLuint, vPosition), 2, c.GL_FLOAT, c.GL_FALSE, 0, null);
-                    c.glEnableVertexAttribArray(@intCast(c.GLuint, vPosition));
-                    // c.glDisableVertexAttribArray(1);
-
-                    c.glDisable(c.GL_DEPTH_TEST);
-                    c.glEnable(c.GL_BLEND);
-                    c.glBlendFunc(c.GL_ONE, c.GL_ONE);
-                    c.glBlendEquation(c.GL_FUNC_ADD);
-
-                    for (self.touch_points) |*pt| {
-                        if (pt.*) |*point| {
-                            c.glUniform1f(uAspect, self.screen_width / self.screen_height);
-                            c.glUniform2f(uPos, point.x / self.screen_width, 1.0 - point.y / self.screen_height);
-                            c.glUniform1f(uIntensity, point.intensity);
-                            c.glDrawArrays(c.GL_TRIANGLE_STRIP, 0, 4);
-
-                            point.intensity -= 0.05;
-                            if (point.intensity <= 0.0) {
-                                pt.* = null;
-                            }
-                        }
+                    if (vPosition < 0) {
+                        app_log.err("vPosition is negative!!! {}", .{vPosition});
                     }
 
-                    c.glEnableVertexAttribArray(0);
-                    c.glVertexAttribPointer(0, 3, c.GL_FLOAT, c.GL_FALSE, @sizeOf(MeshVertex), &mesh[0].pos);
+                    c.glEnableVertexAttribArray(@intCast(c.GLuint, vPosition));
+                    c.glVertexAttribPointer(@intCast(c.GLuint, vPosition), 2, c.GL_FLOAT, c.GL_FALSE, 0, null);
 
-                    c.glEnableVertexAttribArray(1);
-                    c.glVertexAttribPointer(1, 3, c.GL_FLOAT, c.GL_FALSE, @sizeOf(MeshVertex), &mesh[0].normal);
+                    c.glDrawArrays(c.GL_TRIANGLES, 0, 3);
 
-                    c.glUseProgram(shaded_program);
-
-                    c.glClearDepthf(1.0);
-                    c.glClear(c.GL_DEPTH_BUFFER_BIT);
-
-                    c.glDisable(c.GL_BLEND);
-                    c.glEnable(c.GL_DEPTH_TEST);
-
-                    var matrix = [4][4]f32{
-                        [4]f32{ 1, 0, 0, 0 },
-                        [4]f32{ 0, 1, 0, 0 },
-                        [4]f32{ 0, 0, 1, 0 },
-                        [4]f32{ 0, 0, 0, 1 },
-                    };
-
-                    matrix[1][1] = self.screen_width / self.screen_height;
-
-                    matrix[0][0] = @sin(t);
-                    matrix[2][0] = @cos(t);
-                    matrix[0][2] = @cos(t);
-                    matrix[2][2] = -@sin(t);
-
-                    c.glUniformMatrix4fv(uTransform, 1, c.GL_FALSE, @ptrCast([*]const f32, &matrix));
-
-                    c.glDrawArrays(c.GL_TRIANGLES, 0, mesh.len);
+                    c.glDisableVertexAttribArray(0);
 
                     try egl.swapBuffers();
                 }
