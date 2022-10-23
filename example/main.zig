@@ -208,7 +208,7 @@ pub const AndroidApp = struct {
             var len = std.unicode.utf8Encode(codepoint, &buf) catch 0;
             var key_text = buf[0..len];
 
-            std.log.scoped(.input).info("Pressed key: '{s}' U+{X}", .{ key_text, codepoint });
+            std.log.scoped(.input).debug("Pressed key: '{s}' U+{X}", .{ key_text, codepoint });
         }
 
         return false;
@@ -248,7 +248,7 @@ pub const AndroidApp = struct {
             defer jni.deinit();
 
             // Show/Hide keyboard
-            _ = jni.AndroidDisplayKeyboard(true);
+            // _ = jni.AndroidDisplayKeyboard(true);
 
             // this allows you to send the app in the background
             // const success = jni.AndroidSendToBack(true);
@@ -372,6 +372,15 @@ pub const AndroidApp = struct {
 
         var uTransform: c.GLint = undefined;
 
+        var genbuffers: c.GLuint = undefined;
+
+        const vVertices = [_]c.GLfloat{
+            0.0, 0.0,
+            1.0, 0.0,
+            0.0, 1.0,
+            1.0, 1.0,
+        };
+
         while (@atomicLoad(bool, &self.running, .SeqCst)) {
 
             // Input process
@@ -392,7 +401,7 @@ pub const AndroidApp = struct {
                             .AINPUT_EVENT_TYPE_KEY => try self.processKeyEvent(event.?),
                             .AINPUT_EVENT_TYPE_MOTION => try self.processMotionEvent(event.?),
                             else => blk: {
-                                std.log.scoped(.input).debug("Unhandled input event type ({})\n", .{event_type});
+                                std.log.scoped(.input).info("Unhandled input event type ({})\n", .{event_type});
                                 break :blk false;
                             },
                         };
@@ -413,18 +422,28 @@ pub const AndroidApp = struct {
                     try egl.makeCurrent();
 
                     if (self.egl_init) {
+                        c.glGenBuffers(1, &genbuffers);
+                        c.glBindBuffer(c.GL_ARRAY_BUFFER, genbuffers);
+                        c.glBufferData(c.GL_ARRAY_BUFFER, vVertices.len * @sizeOf(c.GLfloat), &vVertices, c.GL_STATIC_DRAW);
+
+                        // Buffer for debug strings
+                        var buf: []u8 = try self.allocator.alloc(u8, 1024);
+                        defer self.allocator.free(buf);
                         app_log.info(
                             \\GL Vendor:     {s}
                             \\GL Renderer:   {s}
                             \\GL Version:    {s}
-                            \\GL Extensions: {s}
+                            // \\GL Extensions: {s}
                             \\
                         , .{
                             std.mem.span(c.glGetString(c.GL_VENDOR)),
                             std.mem.span(c.glGetString(c.GL_RENDERER)),
                             std.mem.span(c.glGetString(c.GL_VERSION)),
-                            std.mem.span(c.glGetString(c.GL_EXTENSIONS)),
+                            // std.mem.span(c.glGetString(c.GL_EXTENSIONS)),
                         });
+
+                        c.glEnable(c.GL_DEBUG_OUTPUT);
+                        c.glDebugMessageCallback(android.debugMessageCallback, null);
 
                         touch_program = c.glCreateProgram();
                         {
@@ -432,23 +451,28 @@ pub const AndroidApp = struct {
                             var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
 
                             var ps_code =
-                                \\attribute vec2 vPosition;
-                                \\varying vec2 uv;
+                                \\#version 300 es
+                                \\in vec2 vPosition;
+                                \\out vec2 uv;
+                                \\out vec4 positionOut;
                                 \\void main() {
                                 \\  uv = vPosition;
-                                \\  gl_Position = vec4(2.0 * uv - 1.0, 0.0, 1.0);
+                                \\  positionOut = vec4(2.0 * uv - 1.0, 0.0, 1.0);
                                 \\}
                                 \\
                             ;
                             var fs_code =
-                                \\varying vec2 uv;
+                                \\#version 300 es
+                                \\precision mediump float;
+                                \\in vec2 uv;
                                 \\uniform vec2 uPos;
                                 \\uniform float uAspect;
                                 \\uniform float uIntensity;
+                                \\out vec4 colorOut;
                                 \\void main() {
                                 \\  vec2 rel = uv - uPos;
                                 \\  rel.x *= uAspect;
-                                \\  gl_FragColor = vec4(vec3(pow(uIntensity * clamp(1.0 - 10.0 * length(rel), 0.0, 1.0), 2.2)), 1.0);
+                                \\  colorOut = vec4(vec3(pow(uIntensity * clamp(1.0 - 10.0 * length(rel), 0.0, 1.0), 2.2)), 1.0);
                                 \\}
                                 \\
                             ;
@@ -458,6 +482,31 @@ pub const AndroidApp = struct {
 
                             c.glCompileShader(ps);
                             c.glCompileShader(fs);
+
+                            var is_compiled: c.GLint = c.GL_FALSE;
+                            c.glGetShaderiv(ps, c.GL_COMPILE_STATUS, &is_compiled);
+                            if (is_compiled == c.GL_FALSE) {
+                                var max_length: c.GLint = 0;
+                                c.glGetShaderiv(ps, c.GL_INFO_LOG_LENGTH, &max_length);
+                                if (max_length > buf.len) {
+                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
+                                }
+                                c.glGetShaderInfoLog(ps, max_length, &max_length, buf.ptr);
+                                const str = buf[0..@intCast(usize, max_length)];
+                                app_log.err("\n\n\tVertex Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
+                            }
+                            is_compiled = c.GL_FALSE;
+                            c.glGetShaderiv(fs, c.GL_COMPILE_STATUS, &is_compiled);
+                            if (is_compiled == c.GL_FALSE) {
+                                var max_length: c.GLint = 0;
+                                c.glGetShaderiv(fs, c.GL_INFO_LOG_LENGTH, &max_length);
+                                if (max_length > buf.len) {
+                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
+                                }
+                                c.glGetShaderInfoLog(fs, max_length, &max_length, buf.ptr);
+                                const str = buf[0..@intCast(usize, max_length)];
+                                app_log.err("\n\n\tFragment Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
+                            }
 
                             c.glAttachShader(touch_program, ps);
                             c.glAttachShader(touch_program, fs);
@@ -479,23 +528,28 @@ pub const AndroidApp = struct {
                             var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
 
                             var ps_code =
-                                \\attribute vec3 vPosition;
-                                \\attribute vec3 vNormal;
+                                \\#version 300 es
+                                \\in vec3 vPosition;
+                                \\in vec3 vNormal;
                                 \\uniform mat4 uTransform;
-                                \\varying vec3 normal;
+                                \\out vec3 normal;
+                                \\out vec4 positionOut;
                                 \\void main() {
                                 \\  normal = mat3(uTransform) * vNormal;
-                                \\  gl_Position = uTransform * vec4(vPosition, 1.0);
+                                \\  positionOut = uTransform * vec4(vPosition, 1.0);
                                 \\}
                                 \\
                             ;
                             var fs_code =
-                                \\varying vec3 normal;
+                                \\#version 300 es
+                                \\precision mediump float;
+                                \\in vec3 normal;
+                                \\out vec4 colorOut;
                                 \\void main() {
                                 \\  vec3 base_color = vec3(0.968,0.643,0.113); // #F7A41D
                                 \\  vec3 ldir = normalize(vec3(0.3, 0.4, 2.0));
                                 \\  float l = 0.3 + 0.8 * clamp(-dot(normal, ldir), 0.0, 1.0);
-                                \\  gl_FragColor = vec4(l * base_color,1);
+                                \\  colorOut = vec4(l * base_color,1);
                                 \\}
                                 \\
                             ;
@@ -505,6 +559,31 @@ pub const AndroidApp = struct {
 
                             c.glCompileShader(ps);
                             c.glCompileShader(fs);
+
+                            var is_compiled: c.GLint = c.GL_FALSE;
+                            c.glGetShaderiv(ps, c.GL_COMPILE_STATUS, &is_compiled);
+                            if (is_compiled == c.GL_FALSE) {
+                                var max_length: c.GLint = 0;
+                                c.glGetShaderiv(ps, c.GL_INFO_LOG_LENGTH, &max_length);
+                                if (max_length > buf.len) {
+                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
+                                }
+                                c.glGetShaderInfoLog(ps, max_length, &max_length, buf.ptr);
+                                const str = buf[0..@intCast(usize, max_length)];
+                                app_log.err("\n\n\tVertex Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
+                            }
+                            is_compiled = c.GL_FALSE;
+                            c.glGetShaderiv(fs, c.GL_COMPILE_STATUS, &is_compiled);
+                            if (is_compiled == c.GL_FALSE) {
+                                var max_length: c.GLint = 0;
+                                c.glGetShaderiv(fs, c.GL_INFO_LOG_LENGTH, &max_length);
+                                if (max_length > buf.len) {
+                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
+                                }
+                                c.glGetShaderInfoLog(fs, max_length, &max_length, buf.ptr);
+                                const str = buf[0..@intCast(usize, max_length)];
+                                app_log.err("\n\n\tFragment Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
+                            }
 
                             c.glAttachShader(shaded_program, ps);
                             c.glAttachShader(shaded_program, fs);
@@ -520,6 +599,33 @@ pub const AndroidApp = struct {
                         uTransform = c.glGetUniformLocation(shaded_program, "uTransform");
 
                         self.egl_init = false;
+
+                        {
+                            var is_linked: c.GLint = c.GL_FALSE;
+                            c.glGetProgramiv(touch_program, c.GL_LINK_STATUS, &is_linked);
+                            if (is_linked == c.GL_FALSE) {
+                                var max_length: c.GLint = 0;
+                                c.glGetProgramiv(touch_program, c.GL_INFO_LOG_LENGTH, &max_length);
+                                if (max_length > buf.len) {
+                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
+                                }
+                                c.glGetProgramInfoLog(touch_program, max_length, &max_length, buf.ptr);
+                                const str = buf[0..@intCast(usize, max_length)];
+                                app_log.err("\n\n\tTouch program - is_linked={}\n\t{s}\n", .{ is_linked, str });
+                            }
+
+                            c.glGetProgramiv(shaded_program, c.GL_LINK_STATUS, &is_linked);
+                            if (is_linked == c.GL_FALSE) {
+                                var max_length: c.GLint = 0;
+                                c.glGetProgramiv(touch_program, c.GL_INFO_LOG_LENGTH, &max_length);
+                                if (max_length > buf.len) {
+                                    buf = try self.allocator.realloc(buf, @intCast(usize, max_length));
+                                }
+                                c.glGetProgramInfoLog(touch_program, max_length, &max_length, buf.ptr);
+                                const str = buf[0..@intCast(usize, max_length)];
+                                app_log.err("\n\n\tShaded program - is_linked={}\n\t{s}\n", .{ is_linked, str });
+                            }
+                        }
                     }
 
                     const t = @intToFloat(f32, loop) / 100.0;
@@ -534,16 +640,11 @@ pub const AndroidApp = struct {
 
                     c.glUseProgram(touch_program);
 
-                    const vVertices = [_]c.GLfloat{
-                        0.0, 0.0,
-                        1.0, 0.0,
-                        0.0, 1.0,
-                        1.0, 1.0,
-                    };
-
-                    c.glVertexAttribPointer(0, 2, c.GL_FLOAT, c.GL_FALSE, 0, &vVertices);
-                    c.glEnableVertexAttribArray(0);
-                    c.glDisableVertexAttribArray(1);
+                    c.glBindBuffer(c.GL_ARRAY_BUFFER, genbuffers);
+                    const vPosition = c.glGetAttribLocation(touch_program, "vPosition");
+                    c.glVertexAttribPointer(@intCast(c.GLuint, vPosition), 2, c.GL_FLOAT, c.GL_FALSE, 0, null);
+                    c.glEnableVertexAttribArray(@intCast(c.GLuint, vPosition));
+                    // c.glDisableVertexAttribArray(1);
 
                     c.glDisable(c.GL_DEPTH_TEST);
                     c.glEnable(c.GL_BLEND);
