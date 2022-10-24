@@ -94,7 +94,7 @@ pub const AndroidApp = struct {
         self.screen_width = @intToFloat(f32, android.ANativeWindow_getWidth(window));
         self.screen_height = @intToFloat(f32, android.ANativeWindow_getHeight(window));
 
-        self.egl = EGLContext.init(window, .gles3) catch |err| blk: {
+        self.egl = EGLContext.init(window, .gles2) catch |err| blk: {
             app_log.err("Failed to initialize EGL for window: {}\n", .{err});
             break :blk null;
         };
@@ -498,8 +498,13 @@ const Render = struct {
         c.glBindBuffer(c.GL_ARRAY_BUFFER, this.vertex_buffer);
         c.glBufferData(c.GL_ARRAY_BUFFER, vVertices.len * @sizeOf(c.GLfloat), &vVertices, c.GL_STATIC_DRAW);
 
-        c.glEnable(c.GL_DEBUG_OUTPUT);
-        c.glDebugMessageCallback(util.debugMessageCallback, null);
+        if (c.eglGetProcAddress("DebugMessageCallbackKHR")) |glDebugMessageCallbackKHR| {
+            const DEBUGPROC = *const fn (c.GLenum, c.GLenum, c.GLuint, c.GLenum, c.GLsizei, ?[*]const u8, ?*anyopaque) callconv(.C) void;
+            const glDebugMessageCallback = @ptrCast(*const fn (DEBUGPROC, ?*anyopaque) void, glDebugMessageCallbackKHR);
+            glDebugMessageCallback(util.debugMessageCallback, null);
+        } else {
+            app_log.info("No debug callback", .{});
+        }
 
         this.touch_program = c.glCreateProgram();
         {

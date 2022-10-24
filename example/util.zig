@@ -22,9 +22,10 @@ pub fn debugMessageCallback(
             break :message "";
         }
     };
-    switch (severity) {
-        c.GL_DEBUG_SEVERITY_HIGH => app_log.err("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message }),
-        c.GL_DEBUG_SEVERITY_MEDIUM => app_log.warn("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message }),
-        else => app_log.info("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message }),
-    }
+    app_log.err("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message });
+    // switch (severity) {
+    //     c.GL_DEBUG_SEVERITY_HIGH => app_log.err("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message }),
+    //     c.GL_DEBUG_SEVERITY_MEDIUM => app_log.warn("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message }),
+    //     else => app_log.info("source = {}, type = {}, id = {}, severity = {}, message = {s}", .{ source, logtype, id, severity, message }),
+    // }
 }
