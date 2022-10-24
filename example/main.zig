@@ -35,6 +35,7 @@ pub const AndroidApp = struct {
     activity: *android.ANativeActivity,
 
     thread: ?std.Thread = null,
+    audio_thread: ?std.Thread = null,
     running: bool = true,
 
     egl_lock: std.Thread.Mutex = .{},
@@ -67,6 +68,7 @@ pub const AndroidApp = struct {
     /// the application gets destroyed.
     pub fn start(self: *Self) !void {
         self.thread = try std.Thread.spawn(.{}, mainLoop, .{self});
+        self.audio_thread = try std.Thread.spawn(.{}, audioLoop, .{self});
     }
 
     /// Uninitialize the application.
@@ -74,6 +76,10 @@ pub const AndroidApp = struct {
     pub fn deinit(self: *Self) void {
         @atomicStore(bool, &self.running, false, .SeqCst);
         if (self.thread) |thread| {
+            thread.join();
+            self.thread = null;
+        }
+        if (self.audio_thread) |thread| {
             thread.join();
             self.thread = null;
         }
@@ -342,6 +348,59 @@ pub const AndroidApp = struct {
         return false;
     }
 
+    fn audioLoop(self: *Self) !void {
+        var audio_buffer: []f32 = try self.allocator.alloc(f32, 1024);
+        defer self.allocator.free(audio_buffer);
+        var audio_data: AudioData = .{
+            .buffer = audio_buffer,
+        };
+        var engine: c.SLObjectItf = null;
+        var itf: c.SLEngineItf = null;
+        var simple_buffer_queue: c.SLAndroidSimpleBufferQueueItf = null;
+        var output_mix: c.SLObjectItf = undefined;
+        // open
+        {
+            // create
+            var res: c.SLresult = c.slCreateEngine(&engine, 0, null, 0, null, null);
+            app_log.info("create engine", .{});
+            log_opensles_result(res);
+            // realize
+            res = engine.*.*.Realize.?(engine, c.SL_BOOLEAN_FALSE);
+            app_log.info("realize engine", .{});
+            log_opensles_result(res);
+            // get interface
+            res = engine.*.*.GetInterface.?(engine, c.SL_IID_ENGINE, @ptrCast(*anyopaque, &itf));
+            app_log.info("get interface", .{});
+            log_opensles_result(res);
+
+            res = itf.*.*.CreateOutputMix.?(itf, &output_mix, 0, 0, 0);
+            app_log.info("output mix", .{});
+            log_opensles_result(res);
+
+            res = engine.*.*.GetInterface.?(engine, c.SL_IID_ANDROIDSIMPLEBUFFERQUEUE, @ptrCast(*anyopaque, &simple_buffer_queue));
+            app_log.info("get buffer interface", .{});
+            log_opensles_result(res);
+            if (res == c.SL_RESULT_SUCCESS) {
+                if (simple_buffer_queue.*.*.RegisterCallback) |RegisterCallback| {
+                    res = RegisterCallback(simple_buffer_queue, AudioData.callback, &audio_data);
+                    app_log.info("register callback", .{});
+                    log_opensles_result(res);
+                }
+            }
+        }
+        defer {
+            app_log.info("destroy engine", .{});
+            engine.*.*.Destroy.?(engine);
+            engine = null;
+            itf = null;
+        }
+
+        while (@atomicLoad(bool, &self.running, .SeqCst)) {
+            app_log.info("loop", .{});
+            std.time.sleep(10 * std.time.ns_per_ms);
+        }
+    }
+
     fn mainLoop(self: *Self) !void {
         // This code somehow crashes yet. Needs more investigations
         var jni = JNI.init(self.activity);
@@ -598,3 +657,48 @@ const Render = struct {
         c.glDisableVertexAttribArray(0);
     }
 };
+
+const AudioData = struct {
+    time: f32 = 0,
+    sample_rate: f32 = 44100,
+    buffer: []f32,
+    fn callback(bq: c.SLAndroidSimpleBufferQueueItf, context: ?*anyopaque) callconv(.C) void {
+        app_log.info("callback start", .{});
+        const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), context));
+        app_log.info("ptr cast", .{});
+        // for (self.buffer) |*sample, i| {
+        //     const time = @sin(@intToFloat(f32, i) + self.time);
+        //     sample.* = std.math.sin(440 * 2.0 * std.math.pi * time / self.sample_rate) * 0.1;
+        // }
+        _ = bq.*.*.Enqueue.?(bq, self.buffer.ptr, @intCast(c_uint, self.buffer.len * @sizeOf(f32)));
+        // self.time += @intToFloat(f32, self.buffer.len);
+        app_log.info("enqueue", .{});
+    }
+};
+
+fn log_opensles_result(res: c.SLresult) void {
+    const str = switch (res) {
+        c.SL_RESULT_SUCCESS => "SLES Success",
+        c.SL_RESULT_PRECONDITIONS_VIOLATED => "SLES PRECONDITIONS_VIOLATED",
+        c.SL_RESULT_PARAMETER_INVALID => "SLES PARAMETER_INVALID",
+        c.SL_RESULT_MEMORY_FAILURE => "SLES MEMORY_FAILURE",
+        c.SL_RESULT_RESOURCE_ERROR => "SLES RESOURCE_ERROR",
+        c.SL_RESULT_RESOURCE_LOST => "SLES RESOURCE_LOST",
+        c.SL_RESULT_IO_ERROR => "SLES IO_ERROR",
+        c.SL_RESULT_BUFFER_INSUFFICIENT => "SLES BUFFER_INSUFFICIENT",
+        c.SL_RESULT_CONTENT_CORRUPTED => "SLES CONTENT_CORRUPTED",
+        c.SL_RESULT_CONTENT_UNSUPPORTED => "SLES CONTENT_UNSUPPORTED",
+        c.SL_RESULT_CONTENT_NOT_FOUND => "SLES CONTENT_NOT_FOUND",
+        c.SL_RESULT_PERMISSION_DENIED => "SLES PERMISSION_DENIED",
+        c.SL_RESULT_FEATURE_UNSUPPORTED => "SLES FEATURE_UNSUPPORTED",
+        c.SL_RESULT_INTERNAL_ERROR => "SLES INTERNAL_ERROR",
+        c.SL_RESULT_UNKNOWN_ERROR => "SLES UNKNOWN_ERROR",
+        c.SL_RESULT_OPERATION_ABORTED => "SLES OPERATION_ABORTED",
+        c.SL_RESULT_CONTROL_LOST => "SLES CONTROL_LOST",
+        // c.SL_RESULT_READONLY => "SLES READONLY",
+        // c.SL_RESULT_ENGINEOPTION_UNSUPPORTED => "SLES ENGINEOPTION_UNSUPPORTED",
+        // c.SL_RESULT_SOURCE_SINK_INCOMPATIBLE => "SLES SOURCE_SINK_INCOMPATIBLE",
+        else => "SLES Unmatched",
+    };
+    app_log.info("{s}", .{str});
+}

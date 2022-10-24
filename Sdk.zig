@@ -957,7 +957,11 @@ const zig_targets = struct {
 };
 
 const app_libs = [_][]const u8{
-    "GLESv2", "EGL", "android", "log",
+    "GLESv2",
+    "EGL",
+    "android",
+    "log",
+    "OpenSLES",
 };
 
 const BuildOptionStep = struct {
