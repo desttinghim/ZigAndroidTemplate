@@ -2,6 +2,8 @@ const std = @import("std");
 
 const android = @import("android");
 
+const util = @import("util.zig");
+
 pub const panic = android.panic;
 pub const log = android.log;
 
@@ -361,17 +363,7 @@ pub const AndroidApp = struct {
             printConfig(cfg);
         }
 
-        const GLuint = c.GLuint;
-
-        var touch_program: GLuint = undefined;
-
-        var vertex_buffer: GLuint = undefined;
-
-        const vVertices = [_]c.GLfloat{
-            0.0, 0.0,
-            1.0, 0.0,
-            0.0, 1.0,
-        };
+        var render: Render = undefined;
 
         while (@atomicLoad(bool, &self.running, .SeqCst)) {
 
@@ -414,80 +406,10 @@ pub const AndroidApp = struct {
                     try egl.makeCurrent();
 
                     if (self.egl_init) {
-                        c.glGenBuffers(1, &vertex_buffer);
-                        c.glBindBuffer(c.GL_ARRAY_BUFFER, vertex_buffer);
-                        c.glBufferData(c.GL_ARRAY_BUFFER, vVertices.len * @sizeOf(c.GLfloat), &vVertices, c.GL_STATIC_DRAW);
-
-                        c.glEnable(c.GL_DEBUG_OUTPUT);
-                        c.glDebugMessageCallback(android.debugMessageCallback, null);
-
-                        touch_program = c.glCreateProgram();
-                        {
-                            var ps = c.glCreateShader(c.GL_VERTEX_SHADER);
-                            var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
-
-                            var ps_code =
-                                \\#version 300 es
-                                \\in vec2 vPosition;
-                                \\void main() {
-                                \\  gl_Position = vec4(vPosition, 0.0, 1.0);
-                                \\}
-                                \\
-                            ;
-                            var fs_code =
-                                \\#version 300 es
-                                \\precision mediump float;
-                                \\out vec4 fragColor;
-                                \\void main() {
-                                \\  fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-                                \\}
-                                \\
-                            ;
-
-                            c.glShaderSource(ps, 1, @ptrCast([*c]const [*c]const u8, &ps_code), null);
-                            c.glShaderSource(fs, 1, @ptrCast([*c]const [*c]const u8, &fs_code), null);
-
-                            c.glCompileShader(ps);
-                            c.glCompileShader(fs);
-
-                            c.glAttachShader(touch_program, ps);
-                            c.glAttachShader(touch_program, fs);
-
-                            c.glLinkProgram(touch_program);
-
-                            c.glDetachShader(touch_program, ps);
-                            c.glDetachShader(touch_program, fs);
-                        }
-
+                        render = Render.init();
                         self.egl_init = false;
                     }
-
-                    const t = @intToFloat(f32, loop) / 100.0;
-
-                    c.glClearColor(
-                        0.5 + 0.5 * @sin(t + 0.0),
-                        0.5 + 0.5 * @sin(t + 1.0),
-                        0.5 + 0.5 * @sin(t + 2.0),
-                        1.0,
-                    );
-                    c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT);
-
-                    c.glUseProgram(touch_program);
-
-                    c.glBindBuffer(c.GL_ARRAY_BUFFER, vertex_buffer);
-
-                    const vPosition = c.glGetAttribLocation(touch_program, "vPosition");
-                    if (vPosition < 0) {
-                        app_log.err("vPosition is negative!!! {}", .{vPosition});
-                    }
-
-                    c.glEnableVertexAttribArray(@intCast(c.GLuint, vPosition));
-                    c.glVertexAttribPointer(@intCast(c.GLuint, vPosition), 2, c.GL_FLOAT, c.GL_FALSE, 0, null);
-
-                    c.glDrawArrays(c.GL_TRIANGLES, 0, 3);
-
-                    c.glDisableVertexAttribArray(0);
-
+                    render.render(loop);
                     try egl.swapBuffers();
                 }
             }
@@ -556,4 +478,118 @@ const mesh = blk: {
     }
 
     break :blk array;
+};
+
+const Render = struct {
+    touch_program: GLuint,
+    vertex_buffer: GLuint,
+
+    const GLuint = c.GLuint;
+    const vVertices = [_]c.GLfloat{
+        0.0, 0.0,
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+
+    pub fn init() @This() {
+        var this: @This() = undefined;
+
+        c.glGenBuffers(1, &this.vertex_buffer);
+        c.glBindBuffer(c.GL_ARRAY_BUFFER, this.vertex_buffer);
+        c.glBufferData(c.GL_ARRAY_BUFFER, vVertices.len * @sizeOf(c.GLfloat), &vVertices, c.GL_STATIC_DRAW);
+
+        c.glEnable(c.GL_DEBUG_OUTPUT);
+        c.glDebugMessageCallback(util.debugMessageCallback, null);
+
+        this.touch_program = c.glCreateProgram();
+        {
+            var ps = c.glCreateShader(c.GL_VERTEX_SHADER);
+            var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
+
+            var ps_code =
+                \\#version 100
+                \\attribute vec2 vPosition;
+                \\void main() {
+                \\  gl_Position = vec4(vPosition, 0.0, 1.0);
+                \\}
+                \\
+            ;
+            var fs_code =
+                \\#version 100
+                \\precision mediump float;
+                \\
+                \\void main() {
+                \\  gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                \\}
+                \\
+            ;
+
+            c.glShaderSource(ps, 1, @ptrCast([*c]const [*c]const u8, &ps_code), null);
+            c.glShaderSource(fs, 1, @ptrCast([*c]const [*c]const u8, &fs_code), null);
+
+            c.glCompileShader(ps);
+            c.glCompileShader(fs);
+
+            var buf: [1024]u8 = undefined;
+
+            var is_compiled: c.GLint = c.GL_FALSE;
+            c.glGetShaderiv(ps, c.GL_COMPILE_STATUS, &is_compiled);
+            if (is_compiled == c.GL_FALSE) {
+                var max_length: c.GLint = 0;
+                c.glGetShaderiv(ps, c.GL_INFO_LOG_LENGTH, &max_length);
+                max_length = @max(max_length, @intCast(c_int, buf.len));
+                c.glGetShaderInfoLog(ps, max_length, &max_length, &buf);
+                const str = buf[0..@intCast(usize, max_length)];
+                app_log.err("\n\n\tVertex Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
+            }
+            is_compiled = c.GL_FALSE;
+            c.glGetShaderiv(fs, c.GL_COMPILE_STATUS, &is_compiled);
+            if (is_compiled == c.GL_FALSE) {
+                var max_length: c.GLint = 0;
+                c.glGetShaderiv(fs, c.GL_INFO_LOG_LENGTH, &max_length);
+                max_length = @max(max_length, @intCast(c_int, buf.len));
+                c.glGetShaderInfoLog(fs, max_length, &max_length, &buf);
+                const str = buf[0..@intCast(usize, max_length)];
+                app_log.err("\n\n\tFragment Shader - is_compiled={}\n\t{s}\n", .{ is_compiled, str });
+            }
+
+            c.glAttachShader(this.touch_program, ps);
+            c.glAttachShader(this.touch_program, fs);
+
+            c.glLinkProgram(this.touch_program);
+
+            c.glDetachShader(this.touch_program, ps);
+            c.glDetachShader(this.touch_program, fs);
+        }
+
+        return this;
+    }
+
+    pub fn render(self: *@This(), loop: usize) void {
+        const t = @intToFloat(f32, loop) / 100.0;
+
+        c.glClearColor(
+            0.5 + 0.5 * @sin(t + 0.0),
+            0.5 + 0.5 * @sin(t + 1.0),
+            0.5 + 0.5 * @sin(t + 2.0),
+            1.0,
+        );
+        c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT);
+
+        c.glUseProgram(self.touch_program);
+
+        c.glBindBuffer(c.GL_ARRAY_BUFFER, self.vertex_buffer);
+
+        const vPosition = c.glGetAttribLocation(self.touch_program, "vPosition");
+        if (vPosition < 0) {
+            app_log.err("vPosition is negative!!! {}", .{vPosition});
+        }
+
+        c.glEnableVertexAttribArray(@intCast(c.GLuint, vPosition));
+        c.glVertexAttribPointer(@intCast(c.GLuint, vPosition), 2, c.GL_FLOAT, c.GL_FALSE, 0, null);
+
+        c.glDrawArrays(c.GL_TRIANGLES, 0, 3);
+
+        c.glDisableVertexAttribArray(0);
+    }
 };
