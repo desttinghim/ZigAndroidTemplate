@@ -351,52 +351,15 @@ pub const AndroidApp = struct {
     fn audioLoop(self: *Self) !void {
         var audio_buffer: []f32 = try self.allocator.alloc(f32, 1024);
         defer self.allocator.free(audio_buffer);
-        var audio_data: AudioData = .{
-            .buffer = audio_buffer,
-        };
-        var engine: c.SLObjectItf = null;
-        var itf: c.SLEngineItf = null;
-        var simple_buffer_queue: c.SLAndroidSimpleBufferQueueItf = null;
-        var output_mix: c.SLObjectItf = undefined;
-        // open
-        {
-            // create
-            var res: c.SLresult = c.slCreateEngine(&engine, 0, null, 0, null, null);
-            app_log.info("create engine", .{});
-            log_opensles_result(res);
-            // realize
-            res = engine.*.*.Realize.?(engine, c.SL_BOOLEAN_FALSE);
-            app_log.info("realize engine", .{});
-            log_opensles_result(res);
-            // get interface
-            res = engine.*.*.GetInterface.?(engine, c.SL_IID_ENGINE, @ptrCast(*anyopaque, &itf));
-            app_log.info("get interface", .{});
-            log_opensles_result(res);
-
-            res = itf.*.*.CreateOutputMix.?(itf, &output_mix, 0, 0, 0);
-            app_log.info("output mix", .{});
-            log_opensles_result(res);
-
-            res = engine.*.*.GetInterface.?(engine, c.SL_IID_ANDROIDSIMPLEBUFFERQUEUE, @ptrCast(*anyopaque, &simple_buffer_queue));
-            app_log.info("get buffer interface", .{});
-            log_opensles_result(res);
-            if (res == c.SL_RESULT_SUCCESS) {
-                if (simple_buffer_queue.*.*.RegisterCallback) |RegisterCallback| {
-                    res = RegisterCallback(simple_buffer_queue, AudioData.callback, &audio_data);
-                    app_log.info("register callback", .{});
-                    log_opensles_result(res);
-                }
-            }
-        }
-        defer {
-            app_log.info("destroy engine", .{});
-            engine.*.*.Destroy.?(engine);
-            engine = null;
-            itf = null;
-        }
+        var audio_data = try AudioData.init(audio_buffer);
+        defer audio_data.deinit();
 
         while (@atomicLoad(bool, &self.running, .SeqCst)) {
-            app_log.info("loop", .{});
+            if (audio_data.is_playing and audio_data.is_done_buffer and audio_data.play_start_time.read() > std.time.ns_per_s * 2) {
+                _ = audio_data.player.*.*.SetPlayState.?(audio_data.player, c.SL_PLAYSTATE_STOPPED);
+                _ = audio_data.player_buf_q.*.*.Clear.?(audio_data.player_buf_q);
+                audio_data.is_playing = false;
+            }
             std.time.sleep(10 * std.time.ns_per_ms);
         }
     }
@@ -662,6 +625,110 @@ const AudioData = struct {
     time: f32 = 0,
     sample_rate: f32 = 44100,
     buffer: []f32,
+
+    engine_obj: c.SLObjectItf = null,
+    engine: c.SLEngineItf = null,
+    output_mix_obj: c.SLObjectItf = null,
+    output_mix_vol: c.SLVolumeItf = null,
+    clip_samples: ?*anyopaque = null,
+    clip_num_samples: c_uint = 0,
+    clip_samples_per_sec: c_uint = 0,
+    format: c.SLDataFormat_PCM = undefined,
+    src: c.SLDataSource = undefined,
+    dst: c.SLDataSink = undefined,
+    in_loc: c.SLDataLocator_AndroidSimpleBufferQueue = undefined,
+    out_loc: c.SLDataLocator_OutputMix = undefined,
+    player_obj: c.SLObjectItf = null,
+    player: c.SLPlayItf = null,
+    player_vol: c.SLVolumeItf = null,
+    player_buf_q: c.SLAndroidSimpleBufferQueueItf = null,
+    is_playing: bool = false,
+    is_done_buffer: bool = false,
+    play_start_time: std.time.Timer = undefined,
+    pub fn init(buffer: []f32) !@This() {
+        var self = @This(){ .buffer = buffer };
+        // Create engine
+        var res: c.SLresult = c.slCreateEngine(&self.engine_obj, 0, null, 0, null, null);
+        log_opensles_result(res, "Create engine");
+
+        res = self.engine_obj.*.*.Realize.?(self.engine_obj, c.SL_BOOLEAN_FALSE);
+        log_opensles_result(res, "Realize engine");
+
+        res = self.engine_obj.*.*.GetInterface.?(self.engine_obj, c.SL_IID_ENGINE, @ptrCast(*anyopaque, &self.engine));
+        log_opensles_result(res, "Get engine interface");
+
+        // Create main OutputMix, try to get volume interface
+        var ids = [_]c.SLInterfaceID{c.SL_IID_VOLUME};
+        var req = [_]c.SLboolean{c.SL_BOOLEAN_FALSE};
+
+        res = self.engine.*.*.CreateOutputMix.?(self.engine, &self.output_mix_obj, ids.len, &ids, @ptrCast(*const c_uint, &req));
+        log_opensles_result(res, "Create output mix");
+
+        res = self.output_mix_obj.*.*.Realize.?(self.output_mix_obj, c.SL_BOOLEAN_FALSE);
+        log_opensles_result(res, "Realize output mix");
+
+        res = self.output_mix_obj.*.*.GetInterface.?(self.output_mix_obj, c.SL_IID_VOLUME, @ptrCast(*anyopaque, &self.output_mix_vol));
+        log_opensles_result(res, "Get volume interface");
+        if (res != c.SL_RESULT_SUCCESS) self.output_mix_vol = null;
+
+        self.format = .{
+            .formatType = c.SL_DATAFORMAT_PCM,
+            .numChannels = 1,
+            .samplesPerSec = 44100 * 1000, // mHz
+            .bitsPerSample = c.SL_PCMSAMPLEFORMAT_FIXED_16,
+            .containerSize = 16,
+            .channelMask = c.SL_SPEAKER_FRONT_CENTER,
+            .endianness = c.SL_BYTEORDER_LITTLEENDIAN,
+        };
+
+        self.src = .{
+            .pLocator = &self.in_loc,
+            .pFormat = &self.format,
+        };
+
+        self.out_loc.locatorType = c.SL_DATALOCATOR_OUTPUTMIX;
+        self.out_loc.outputMix = self.output_mix_obj;
+
+        self.dst = .{
+            .pLocator = &self.out_loc,
+            .pFormat = null,
+        };
+
+        const ids2 = [_]c.SLInterfaceID{ c.SL_IID_VOLUME, c.SL_IID_ANDROIDSIMPLEBUFFERQUEUE };
+        const req2 = [_]c.SLboolean{ c.SL_BOOLEAN_FALSE, c.SL_BOOLEAN_FALSE };
+
+        log_opensles_result(self.engine.*.*.CreateAudioPlayer.?(self.engine, &self.player_obj, &self.src, &self.dst, ids2.len, &ids2, &req2), "Create audio player");
+        log_opensles_result(self.player_obj.*.*.Realize.?(self.player_obj, c.SL_BOOLEAN_FALSE), "Realize player");
+        log_opensles_result(self.player_obj.*.*.GetInterface.?(self.player_obj, c.SL_IID_PLAY, @ptrCast(*anyopaque, &self.player)), "Get player interface");
+        log_opensles_result(self.player_obj.*.*.GetInterface.?(self.player_obj, c.SL_IID_VOLUME, @ptrCast(*anyopaque, &self.player_vol)), "Get volume interface");
+        log_opensles_result(self.player_obj.*.*.GetInterface.?(self.player_obj, c.SL_IID_ANDROIDSIMPLEBUFFERQUEUE, @ptrCast(*anyopaque, &self.player_buf_q)), "Get buf q interface");
+
+        log_opensles_result(self.player.*.*.RegisterCallback.?(self.player, play_callback, &self), "Register callback");
+        log_opensles_result(self.player.*.*.SetCallbackEventsMask.?(self.player, c.SL_PLAYEVENT_HEADATEND), "Set events mask");
+
+        if (self.player_buf_q.*.*.RegisterCallback) |RegisterCallback| {
+            res = RegisterCallback(self.player_buf_q, AudioData.callback, &self);
+            log_opensles_result(res, "Register callback");
+        }
+
+        self.play_start_time = try std.time.Timer.start();
+
+        return self;
+    }
+
+    fn deinit(self: *@This()) void {
+        app_log.info("destroy engine", .{});
+        self.engine_obj.*.*.Destroy.?(self.engine_obj);
+        self.engine_obj = null;
+        self.engine = null;
+    }
+
+    fn play_callback(player: c.SLPlayItf, context: ?*anyopaque, event: c.SLuint32) callconv(.C) void {
+        _ = player;
+        const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), context));
+        if (event & c.SL_PLAYEVENT_HEADATEND > 0) self.is_done_buffer = true;
+    }
+
     fn callback(bq: c.SLAndroidSimpleBufferQueueItf, context: ?*anyopaque) callconv(.C) void {
         app_log.info("callback start", .{});
         const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), context));
@@ -676,7 +743,7 @@ const AudioData = struct {
     }
 };
 
-fn log_opensles_result(res: c.SLresult) void {
+fn log_opensles_result(res: c.SLresult, name: []const u8) void {
     const str = switch (res) {
         c.SL_RESULT_SUCCESS => "SLES Success",
         c.SL_RESULT_PRECONDITIONS_VIOLATED => "SLES PRECONDITIONS_VIOLATED",
@@ -700,5 +767,5 @@ fn log_opensles_result(res: c.SLresult) void {
         // c.SL_RESULT_SOURCE_SINK_INCOMPATIBLE => "SLES SOURCE_SINK_INCOMPATIBLE",
         else => "SLES Unmatched",
     };
-    app_log.info("{s}", .{str});
+    app_log.info("{s} - Result: {s}", .{ name, str });
 }
