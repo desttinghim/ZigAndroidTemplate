@@ -961,7 +961,7 @@ const app_libs = [_][]const u8{
     "EGL",
     "android",
     "log",
-    "OpenSLES",
+    "aaudio",
 };
 
 const BuildOptionStep = struct {

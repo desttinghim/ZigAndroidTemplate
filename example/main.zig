@@ -3,6 +3,8 @@ const std = @import("std");
 const android = @import("android");
 
 const util = @import("util.zig");
+const audio = @import("audio.zig");
+const AudioEngine = audio.AudioEngine;
 
 pub const panic = android.panic;
 pub const log = android.log;
@@ -349,17 +351,16 @@ pub const AndroidApp = struct {
     }
 
     fn audioLoop(self: *Self) !void {
-        var audio_buffer: []f32 = try self.allocator.alloc(f32, 1024);
-        defer self.allocator.free(audio_buffer);
-        var audio_data = try AudioData.init(audio_buffer);
-        defer audio_data.deinit();
+        var audio_engine = AudioEngine{};
+        if (!audio_engine.start()) return error.AudioEngineStart;
+        defer _ = audio_engine.stop();
 
         while (@atomicLoad(bool, &self.running, .SeqCst)) {
-            if (audio_data.is_playing and audio_data.is_done_buffer and audio_data.play_start_time.read() > std.time.ns_per_s * 2) {
-                _ = audio_data.player.*.*.SetPlayState.?(audio_data.player, c.SL_PLAYSTATE_STOPPED);
-                _ = audio_data.player_buf_q.*.*.Clear.?(audio_data.player_buf_q);
-                audio_data.is_playing = false;
-            }
+            // if (audio_data.is_playing and audio_data.is_done_buffer and audio_data.play_start_time.read() > std.time.ns_per_s * 2) {
+            //     _ = audio_data.player.*.*.SetPlayState.?(audio_data.player, c.SL_PLAYSTATE_STOPPED);
+            //     _ = audio_data.player_buf_q.*.*.Clear.?(audio_data.player_buf_q);
+            //     audio_data.is_playing = false;
+            // }
             std.time.sleep(10 * std.time.ns_per_ms);
         }
     }
@@ -620,152 +621,3 @@ const Render = struct {
         c.glDisableVertexAttribArray(0);
     }
 };
-
-const AudioData = struct {
-    time: f32 = 0,
-    sample_rate: f32 = 44100,
-    buffer: []f32,
-
-    engine_obj: c.SLObjectItf = null,
-    engine: c.SLEngineItf = null,
-    output_mix_obj: c.SLObjectItf = null,
-    output_mix_vol: c.SLVolumeItf = null,
-    clip_samples: ?*anyopaque = null,
-    clip_num_samples: c_uint = 0,
-    clip_samples_per_sec: c_uint = 0,
-    format: c.SLDataFormat_PCM = undefined,
-    src: c.SLDataSource = undefined,
-    dst: c.SLDataSink = undefined,
-    in_loc: c.SLDataLocator_AndroidSimpleBufferQueue = undefined,
-    out_loc: c.SLDataLocator_OutputMix = undefined,
-    player_obj: c.SLObjectItf = null,
-    player: c.SLPlayItf = null,
-    player_vol: c.SLVolumeItf = null,
-    player_buf_q: c.SLAndroidSimpleBufferQueueItf = null,
-    is_playing: bool = false,
-    is_done_buffer: bool = false,
-    play_start_time: std.time.Timer = undefined,
-    pub fn init(buffer: []f32) !@This() {
-        var self = @This(){ .buffer = buffer };
-        // Create engine
-        var res: c.SLresult = c.slCreateEngine(&self.engine_obj, 0, null, 0, null, null);
-        log_opensles_result(res, "Create engine");
-
-        res = self.engine_obj.*.*.Realize.?(self.engine_obj, c.SL_BOOLEAN_FALSE);
-        log_opensles_result(res, "Realize engine");
-
-        res = self.engine_obj.*.*.GetInterface.?(self.engine_obj, c.SL_IID_ENGINE, @ptrCast(*anyopaque, &self.engine));
-        log_opensles_result(res, "Get engine interface");
-
-        // Create main OutputMix, try to get volume interface
-        var ids = [_]c.SLInterfaceID{c.SL_IID_VOLUME};
-        var req = [_]c.SLboolean{c.SL_BOOLEAN_FALSE};
-
-        res = self.engine.*.*.CreateOutputMix.?(self.engine, &self.output_mix_obj, ids.len, &ids, @ptrCast(*const c_uint, &req));
-        log_opensles_result(res, "Create output mix");
-
-        res = self.output_mix_obj.*.*.Realize.?(self.output_mix_obj, c.SL_BOOLEAN_FALSE);
-        log_opensles_result(res, "Realize output mix");
-
-        res = self.output_mix_obj.*.*.GetInterface.?(self.output_mix_obj, c.SL_IID_VOLUME, @ptrCast(*anyopaque, &self.output_mix_vol));
-        log_opensles_result(res, "Get volume interface");
-        if (res != c.SL_RESULT_SUCCESS) self.output_mix_vol = null;
-
-        self.format = .{
-            .formatType = c.SL_DATAFORMAT_PCM,
-            .numChannels = 1,
-            .samplesPerSec = 44100 * 1000, // mHz
-            .bitsPerSample = c.SL_PCMSAMPLEFORMAT_FIXED_16,
-            .containerSize = 16,
-            .channelMask = c.SL_SPEAKER_FRONT_CENTER,
-            .endianness = c.SL_BYTEORDER_LITTLEENDIAN,
-        };
-
-        self.src = .{
-            .pLocator = &self.in_loc,
-            .pFormat = &self.format,
-        };
-
-        self.out_loc.locatorType = c.SL_DATALOCATOR_OUTPUTMIX;
-        self.out_loc.outputMix = self.output_mix_obj;
-
-        self.dst = .{
-            .pLocator = &self.out_loc,
-            .pFormat = null,
-        };
-
-        const ids2 = [_]c.SLInterfaceID{ c.SL_IID_VOLUME, c.SL_IID_ANDROIDSIMPLEBUFFERQUEUE };
-        const req2 = [_]c.SLboolean{ c.SL_BOOLEAN_FALSE, c.SL_BOOLEAN_FALSE };
-
-        log_opensles_result(self.engine.*.*.CreateAudioPlayer.?(self.engine, &self.player_obj, &self.src, &self.dst, ids2.len, &ids2, &req2), "Create audio player");
-        log_opensles_result(self.player_obj.*.*.Realize.?(self.player_obj, c.SL_BOOLEAN_FALSE), "Realize player");
-        log_opensles_result(self.player_obj.*.*.GetInterface.?(self.player_obj, c.SL_IID_PLAY, @ptrCast(*anyopaque, &self.player)), "Get player interface");
-        log_opensles_result(self.player_obj.*.*.GetInterface.?(self.player_obj, c.SL_IID_VOLUME, @ptrCast(*anyopaque, &self.player_vol)), "Get volume interface");
-        log_opensles_result(self.player_obj.*.*.GetInterface.?(self.player_obj, c.SL_IID_ANDROIDSIMPLEBUFFERQUEUE, @ptrCast(*anyopaque, &self.player_buf_q)), "Get buf q interface");
-
-        log_opensles_result(self.player.*.*.RegisterCallback.?(self.player, play_callback, &self), "Register callback");
-        log_opensles_result(self.player.*.*.SetCallbackEventsMask.?(self.player, c.SL_PLAYEVENT_HEADATEND), "Set events mask");
-
-        if (self.player_buf_q.*.*.RegisterCallback) |RegisterCallback| {
-            res = RegisterCallback(self.player_buf_q, AudioData.callback, &self);
-            log_opensles_result(res, "Register callback");
-        }
-
-        self.play_start_time = try std.time.Timer.start();
-
-        return self;
-    }
-
-    fn deinit(self: *@This()) void {
-        app_log.info("destroy engine", .{});
-        self.engine_obj.*.*.Destroy.?(self.engine_obj);
-        self.engine_obj = null;
-        self.engine = null;
-    }
-
-    fn play_callback(player: c.SLPlayItf, context: ?*anyopaque, event: c.SLuint32) callconv(.C) void {
-        _ = player;
-        const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), context));
-        if (event & c.SL_PLAYEVENT_HEADATEND > 0) self.is_done_buffer = true;
-    }
-
-    fn callback(bq: c.SLAndroidSimpleBufferQueueItf, context: ?*anyopaque) callconv(.C) void {
-        app_log.info("callback start", .{});
-        const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), context));
-        app_log.info("ptr cast", .{});
-        // for (self.buffer) |*sample, i| {
-        //     const time = @sin(@intToFloat(f32, i) + self.time);
-        //     sample.* = std.math.sin(440 * 2.0 * std.math.pi * time / self.sample_rate) * 0.1;
-        // }
-        _ = bq.*.*.Enqueue.?(bq, self.buffer.ptr, @intCast(c_uint, self.buffer.len * @sizeOf(f32)));
-        // self.time += @intToFloat(f32, self.buffer.len);
-        app_log.info("enqueue", .{});
-    }
-};
-
-fn log_opensles_result(res: c.SLresult, name: []const u8) void {
-    const str = switch (res) {
-        c.SL_RESULT_SUCCESS => "SLES Success",
-        c.SL_RESULT_PRECONDITIONS_VIOLATED => "SLES PRECONDITIONS_VIOLATED",
-        c.SL_RESULT_PARAMETER_INVALID => "SLES PARAMETER_INVALID",
-        c.SL_RESULT_MEMORY_FAILURE => "SLES MEMORY_FAILURE",
-        c.SL_RESULT_RESOURCE_ERROR => "SLES RESOURCE_ERROR",
-        c.SL_RESULT_RESOURCE_LOST => "SLES RESOURCE_LOST",
-        c.SL_RESULT_IO_ERROR => "SLES IO_ERROR",
-        c.SL_RESULT_BUFFER_INSUFFICIENT => "SLES BUFFER_INSUFFICIENT",
-        c.SL_RESULT_CONTENT_CORRUPTED => "SLES CONTENT_CORRUPTED",
-        c.SL_RESULT_CONTENT_UNSUPPORTED => "SLES CONTENT_UNSUPPORTED",
-        c.SL_RESULT_CONTENT_NOT_FOUND => "SLES CONTENT_NOT_FOUND",
-        c.SL_RESULT_PERMISSION_DENIED => "SLES PERMISSION_DENIED",
-        c.SL_RESULT_FEATURE_UNSUPPORTED => "SLES FEATURE_UNSUPPORTED",
-        c.SL_RESULT_INTERNAL_ERROR => "SLES INTERNAL_ERROR",
-        c.SL_RESULT_UNKNOWN_ERROR => "SLES UNKNOWN_ERROR",
-        c.SL_RESULT_OPERATION_ABORTED => "SLES OPERATION_ABORTED",
-        c.SL_RESULT_CONTROL_LOST => "SLES CONTROL_LOST",
-        // c.SL_RESULT_READONLY => "SLES READONLY",
-        // c.SL_RESULT_ENGINEOPTION_UNSUPPORTED => "SLES ENGINEOPTION_UNSUPPORTED",
-        // c.SL_RESULT_SOURCE_SINK_INCOMPATIBLE => "SLES SOURCE_SINK_INCOMPATIBLE",
-        else => "SLES Unmatched",
-    };
-    app_log.info("{s} - Result: {s}", .{ name, str });
-}

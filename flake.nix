@@ -37,6 +37,7 @@
             emulator
             platform-tools
             platforms-android-21
+            platforms-android-26
             ndk-25-1-8937393
 
             # Other useful packages for a development environment.
