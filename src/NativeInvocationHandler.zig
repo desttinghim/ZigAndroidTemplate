@@ -1,12 +1,12 @@
 const std = @import("std");
-const android = @import("android-support.zig");
+const jui = @import("jui");
 const Self = @This();
 
-class: android.jobject,
-initFn: android.jmethodID,
+class: jui.jobject,
+initFn: jui.jmethodID,
 
-pub fn init(jni: *android.JNI, class: android.jobject) !Self {
-    const methods = [_]android.JNINativeMethod{
+pub fn init(jni: *jui.JNI, class: jui.jobject) !Self {
+    const methods = [_]jui.JNINativeMethod{
         .{
             .name = "invoke0",
             .signature = "(Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;)Ljava/lang/Object;",
@@ -20,7 +20,7 @@ pub fn init(jni: *android.JNI, class: android.jobject) !Self {
     };
 }
 
-pub fn createAlloc(self: Self, jni: *android.JNI, alloc: std.mem.Allocator, pointer: ?*anyopaque, function: InvokeFn) !android.jobject {
+pub fn createAlloc(self: Self, jni: *jui.JNI, alloc: std.mem.Allocator, pointer: ?*anyopaque, function: InvokeFn) !jui.jobject {
     // Create a InvocationHandler struct
     var handler = try alloc.create(InvocationHandler);
     errdefer alloc.destroy(handler);
@@ -40,7 +40,7 @@ pub fn createAlloc(self: Self, jni: *android.JNI, alloc: std.mem.Allocator, poin
 }
 
 /// Function signature for invoke functions
-pub const InvokeFn = *const fn (?*anyopaque, *android.JNI, android.jobject, android.jobjectArray) anyerror!android.jobject;
+pub const InvokeFn = *const fn (?*anyopaque, *jui.JNI, jui.jobject, jui.jobjectArray) anyerror!jui.jobject;
 
 /// InvocationHandler Technique found here https://groups.google.com/g/android-ndk/c/SRgy93Un8vM
 const InvocationHandler = struct {
@@ -48,13 +48,13 @@ const InvocationHandler = struct {
     function: InvokeFn,
 
     /// Called by java class NativeInvocationHandler
-    pub fn invoke0(jni: *android.JNI, this: android.jobject, proxy: android.jobject, method: android.jobject, args: android.jobjectArray) android.jobject {
+    pub fn invoke0(jni: *jui.JNI, this: jui.jobject, proxy: jui.jobject, method: jui.jobject, args: jui.jobjectArray) jui.jobject {
         return invoke_impl(jni, this, proxy, method, args) catch |e| switch (e) {
             else => @panic(@errorName(e)),
         };
     }
 
-    fn invoke_impl(jni: *android.JNI, this: android.jobject, proxy: android.jobject, method: android.jobject, args: android.jobjectArray) anyerror!android.jobject {
+    fn invoke_impl(jni: *jui.JNI, this: jui.jobject, proxy: jui.jobject, method: jui.jobject, args: jui.jobjectArray) anyerror!jui.jobject {
         _ = proxy; // This is the proxy object. Calling anything on it will cause invoke to be called. If this isn't explicitly handled, it will recurse infinitely
         const Class = try jni.invokeJni(.GetObjectClass, .{this});
         const ptrField = try jni.invokeJni(.GetFieldID, .{ Class, "ptr", "J" });

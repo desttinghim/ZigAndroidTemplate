@@ -6,8 +6,10 @@ const c = @import("c.zig");
 const android = @import("android-bind.zig");
 const build_options = @import("build_options");
 
+const ANativeActivity = @import("ANativeActivity.zig").ANativeActivity;
+const ANativeActivityCallbacks = @import("ANativeActivity.zig").ANativeActivityCallbacks;
+
 pub const egl = @import("egl.zig");
-pub const JNI = @import("jni.zig").JNI;
 pub const audio = @import("audio.zig");
 pub const NativeActivity = @import("NativeActivity.zig");
 pub const NativeInvocationHandler = @import("NativeInvocationHandler.zig");
@@ -17,13 +19,14 @@ const app_log = std.log.scoped(.app_glue);
 // Export the flat functions for now
 // pub const native = android;
 pub usingnamespace android;
+pub usingnamespace @import("ANativeActivity.zig");
 
 const AndroidApp = @import("root").AndroidApp;
 
 pub var sdk_version: c_int = 0;
 
 /// Actual application entry point
-export fn ANativeActivity_onCreate(activity: *android.ANativeActivity, savedState: ?[*]u8, savedStateSize: usize) callconv(.C) void {
+export fn ANativeActivity_onCreate(activity: *ANativeActivity, savedState: ?[*]u8, savedStateSize: usize) callconv(.C) void {
     {
         var sdk_ver_str: [92]u8 = undefined;
         const len = android.__system_property_get("ro.build.version.sdk", &sdk_ver_str);
@@ -224,9 +227,9 @@ pub const std_options = struct {
 
 /// Returns a wrapper implementation for the given App type which implements all
 /// ANativeActivity callbacks.
-fn makeNativeActivityGlue(comptime App: type) android.ANativeActivityCallbacks {
+fn makeNativeActivityGlue(comptime App: type) ANativeActivityCallbacks {
     const T = struct {
-        fn invoke(activity: *android.ANativeActivity, comptime func: []const u8, args: anytype) void {
+        fn invoke(activity: *ANativeActivity, comptime func: []const u8, args: anytype) void {
             if (@hasDecl(App, func)) {
                 if (activity.instance) |instance| {
                     const result = @call(.auto, @field(App, func), .{@ptrCast(*App, @alignCast(@alignOf(App), instance))} ++ args);
@@ -243,7 +246,7 @@ fn makeNativeActivityGlue(comptime App: type) android.ANativeActivityCallbacks {
         }
 
         // return value must be created with malloc(), so we pass the c_allocator to App.onSaveInstanceState
-        fn onSaveInstanceState(activity: *android.ANativeActivity, outSize: *usize) callconv(.C) ?[*]u8 {
+        fn onSaveInstanceState(activity: *ANativeActivity, outSize: *usize) callconv(.C) ?[*]u8 {
             outSize.* = 0;
             if (@hasDecl(App, "onSaveInstanceState")) {
                 if (activity.instance) |instance| {
@@ -259,57 +262,57 @@ fn makeNativeActivityGlue(comptime App: type) android.ANativeActivityCallbacks {
             return null;
         }
 
-        fn onDestroy(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onDestroy(activity: *ANativeActivity) callconv(.C) void {
             if (activity.instance) |instance| {
                 const app = @ptrCast(*App, @alignCast(@alignOf(App), instance));
                 app.deinit();
                 std.heap.c_allocator.destroy(app);
             }
         }
-        fn onStart(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onStart(activity: *ANativeActivity) callconv(.C) void {
             invoke(activity, "onStart", .{});
         }
-        fn onResume(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onResume(activity: *ANativeActivity) callconv(.C) void {
             invoke(activity, "onResume", .{});
         }
-        fn onPause(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onPause(activity: *ANativeActivity) callconv(.C) void {
             invoke(activity, "onPause", .{});
         }
-        fn onStop(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onStop(activity: *ANativeActivity) callconv(.C) void {
             invoke(activity, "onStop", .{});
         }
-        fn onConfigurationChanged(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onConfigurationChanged(activity: *ANativeActivity) callconv(.C) void {
             invoke(activity, "onConfigurationChanged", .{});
         }
-        fn onLowMemory(activity: *android.ANativeActivity) callconv(.C) void {
+        fn onLowMemory(activity: *ANativeActivity) callconv(.C) void {
             invoke(activity, "onLowMemory", .{});
         }
-        fn onWindowFocusChanged(activity: *android.ANativeActivity, hasFocus: c_int) callconv(.C) void {
+        fn onWindowFocusChanged(activity: *ANativeActivity, hasFocus: c_int) callconv(.C) void {
             invoke(activity, "onWindowFocusChanged", .{(hasFocus != 0)});
         }
-        fn onNativeWindowCreated(activity: *android.ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
+        fn onNativeWindowCreated(activity: *ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
             invoke(activity, "onNativeWindowCreated", .{window});
         }
-        fn onNativeWindowResized(activity: *android.ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
+        fn onNativeWindowResized(activity: *ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
             invoke(activity, "onNativeWindowResized", .{window});
         }
-        fn onNativeWindowRedrawNeeded(activity: *android.ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
+        fn onNativeWindowRedrawNeeded(activity: *ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
             invoke(activity, "onNativeWindowRedrawNeeded", .{window});
         }
-        fn onNativeWindowDestroyed(activity: *android.ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
+        fn onNativeWindowDestroyed(activity: *ANativeActivity, window: *android.ANativeWindow) callconv(.C) void {
             invoke(activity, "onNativeWindowDestroyed", .{window});
         }
-        fn onInputQueueCreated(activity: *android.ANativeActivity, input_queue: *android.AInputQueue) callconv(.C) void {
+        fn onInputQueueCreated(activity: *ANativeActivity, input_queue: *android.AInputQueue) callconv(.C) void {
             invoke(activity, "onInputQueueCreated", .{input_queue});
         }
-        fn onInputQueueDestroyed(activity: *android.ANativeActivity, input_queue: *android.AInputQueue) callconv(.C) void {
+        fn onInputQueueDestroyed(activity: *ANativeActivity, input_queue: *android.AInputQueue) callconv(.C) void {
             invoke(activity, "onInputQueueDestroyed", .{input_queue});
         }
-        fn onContentRectChanged(activity: *android.ANativeActivity, rect: *const android.ARect) callconv(.C) void {
+        fn onContentRectChanged(activity: *ANativeActivity, rect: *const android.ARect) callconv(.C) void {
             invoke(activity, "onContentRectChanged", .{rect});
         }
     };
-    return android.ANativeActivityCallbacks{
+    return ANativeActivityCallbacks{
         .onStart = T.onStart,
         .onResume = T.onResume,
         .onSaveInstanceState = T.onSaveInstanceState,

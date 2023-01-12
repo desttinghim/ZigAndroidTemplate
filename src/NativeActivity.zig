@@ -1,41 +1,13 @@
 const std = @import("std");
 const log = std.log.scoped(.jni);
 const android = @import("android-support.zig");
+const jui = @import("jui");
 
 const Self = @This();
 
 activity: *android.ANativeActivity,
-jni: *android.JNI,
-activity_class: android.JNI.Class,
-
-pub fn init(activity: *android.ANativeActivity) Self {
-    var env: *android.JNIEnv = undefined;
-    _ = activity.vm.*.AttachCurrentThread(activity.vm, &env, null);
-    return fromJniEnv(activity, env);
-}
-
-/// Get the JNIEnv associated with the current thread.
-pub fn get(activity: *android.ANativeActivity) Self {
-    var env: *android.JNIEnv = undefined;
-    _ = activity.vm.*.GetEnv(activity.vm, @ptrCast(*?*anyopaque, &env), android.JNI_VERSION_1_6);
-    return fromJniEnv(activity, env);
-}
-
-fn fromJniEnv(activity: *android.ANativeActivity, env: *android.JNIEnv) Self {
-    var jni = @ptrCast(*android.JNI, env);
-    var activityClass = jni.findClass("android/app/NativeActivity") catch @panic("Could not get NativeActivity class");
-
-    return Self{
-        .activity = activity,
-        .jni = jni,
-        .activity_class = activityClass,
-    };
-}
-
-pub fn deinit(self: *Self) void {
-    _ = self.activity.vm.*.DetachCurrentThread(self.activity.vm);
-    self.* = undefined;
-}
+jni: *jui.JNIEnv,
+activity_class: jui.jobject,
 
 pub fn AndroidGetUnicodeChar(self: *Self, keyCode: c_int, metaState: c_int) !u21 {
     // https://stackoverflow.com/questions/21124051/receive-complete-android-unicode-input-in-c-c/43871301

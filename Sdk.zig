@@ -253,6 +253,12 @@ pub const AppTargetConfig = struct {
     x86: ?bool = null,
 };
 
+pub const JuiPkg = std.build.Pkg{
+    .name = "jui",
+    .source = .{ .path = sdkRoot() ++ "/vendor/jui/src/jui.zig" },
+    .dependencies = &[_]std.build.Pkg{},
+};
+
 pub const CreateAppStep = struct {
     sdk: *Sdk,
     first_step: *std.build.Step,
@@ -271,6 +277,7 @@ pub const CreateAppStep = struct {
             .source = .{ .path = sdkRoot() ++ "/src/android-support.zig" },
             .dependencies = &[_]std.build.Pkg{
                 self.build_options.getPackage("build_options"),
+                JuiPkg,
             },
         });
     }
@@ -564,16 +571,6 @@ pub fn createApp(
         make_unsigned_apk.addArg(sdk.b.pathFromRoot(dir));
     }
 
-    for (make_unsigned_apk.argv.items) |arg| {
-        if (arg == .bytes) {
-            std.log.info("{s}", .{arg.bytes});
-        } else {
-            std.log.info("{any}", .{arg});
-        }
-    }
-    // const log_step = sdk.b.addLog("{any}", .{make_unsigned_apk.argv});
-    // make_unsigned_apk.step.dependOn(&log_step.step);
-
     var libs = std.ArrayList(*std.build.LibExeObjStep).init(sdk.b.allocator);
     defer libs.deinit();
 
@@ -801,6 +798,8 @@ pub fn compileAppLibrary(
     exe.bundle_compiler_rt = true;
     exe.strip = (mode == .ReleaseSmall);
     exe.export_table = true;
+
+    exe.addPackage(JuiPkg);
 
     exe.defineCMacro("ANDROID", null);
 

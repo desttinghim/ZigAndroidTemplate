@@ -1,0 +1,3 @@
+[submodule "vendor/jui"]
+	path = vendor/jui
+	url = https://github.com/desttinghim/jui
