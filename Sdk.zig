@@ -564,16 +564,6 @@ pub fn createApp(
         make_unsigned_apk.addArg(sdk.b.pathFromRoot(dir));
     }
 
-    for (make_unsigned_apk.argv.items) |arg| {
-        if (arg == .bytes) {
-            std.log.info("{s}", .{arg.bytes});
-        } else {
-            std.log.info("{any}", .{arg});
-        }
-    }
-    // const log_step = sdk.b.addLog("{any}", .{make_unsigned_apk.argv});
-    // make_unsigned_apk.step.dependOn(&log_step.step);
-
     var libs = std.ArrayList(*std.build.LibExeObjStep).init(sdk.b.allocator);
     defer libs.deinit();
 
