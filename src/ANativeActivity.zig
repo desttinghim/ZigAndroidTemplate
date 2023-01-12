@@ -25,6 +25,10 @@ pub const ANativeActivity = extern struct {
     callbacks: *ANativeActivityCallbacks,
     vm: *jui.JavaVM,
     env: *jui.JNIEnv,
+    /// The NativeActiviy object handle.
+    ///
+    /// IMPORTANT NOTE: This member is mis-named. It should really be named `activity` instead of `clazz`,
+    /// since it's a reference to the NativeActivity instance created by the system.
     clazz: jui.jobject,
     internalDataPath: [*:0]const u8,
     externalDataPath: [*:0]const u8,
