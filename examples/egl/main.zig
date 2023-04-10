@@ -640,10 +640,11 @@ pub const AndroidApp = struct {
 
                             point.intensity -= 0.05;
                             if (point.intensity <= 0.0) {
+                                pt.* = null;
+                            } else if (point.intensity <= 0.5) {
                                 if (point.index) |index| {
                                     self.simple_synth.oscillators[@intCast(usize, index)].setWaveOn(false);
                                 }
-                                pt.* = null;
                             }
                         }
                     }
