@@ -3,7 +3,7 @@
 //! are contained in Sdk.zig.
 
 const std = @import("std");
-const Sdk = @import("Sdk.zig");
+pub const Sdk = @import("Sdk.zig");
 
 pub fn build(b: *std.build.Builder) !void {
     // Default-initialize SDK
