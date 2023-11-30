@@ -29,7 +29,7 @@
       in
       {
         packages = {
-          zig = zig.packages.${system}.master;
+          zig = zig.packages.${system}."0.11.0";
           android-sdk = android.sdk.${system} (sdkPkgs: with sdkPkgs; [
             # Useful packages for building and testing.
             build-tools-33-0-1
