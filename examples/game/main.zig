@@ -203,14 +203,14 @@ pub const AndroidApp = struct {
             var native_activity = NativeActivity.init(self.activity);
             defer native_activity.deinit();
 
-            const codepoint = try native_activity.AndroidGetUnicodeChar(
+            var codepoint = try native_activity.AndroidGetUnicodeChar(
                 android.AKeyEvent_getKeyCode(event),
                 android.AKeyEvent_getMetaState(event),
             );
             var buf: [8]u8 = undefined;
 
-            const len = std.unicode.utf8Encode(codepoint, &buf) catch 0;
-            const key_text = buf[0..len];
+            var len = std.unicode.utf8Encode(codepoint, &buf) catch 0;
+            var key_text = buf[0..len];
 
             std.log.scoped(.input).info("Pressed key: '{s}' U+{X}", .{ key_text, codepoint });
         }
@@ -301,7 +301,7 @@ pub const AndroidApp = struct {
         });
 
         var i: usize = 0;
-        const cnt = android.AMotionEvent_getPointerCount(event);
+        var cnt = android.AMotionEvent_getPointerCount(event);
         while (i < cnt) : (i += 1) {
             std.log.scoped(.input).debug(
                 \\Pointer {}:
@@ -360,7 +360,7 @@ pub const AndroidApp = struct {
         app_log.info("mainLoop() started\n", .{});
 
         self.config = blk: {
-            const cfg = android.AConfiguration_new() orelse return error.OutOfMemory;
+            var cfg = android.AConfiguration_new() orelse return error.OutOfMemory;
             android.AConfiguration_fromAssetManager(cfg, self.activity.assetManager);
             break :blk cfg;
         };
@@ -470,10 +470,10 @@ pub const AndroidApp = struct {
 
                         touch_program = c.glCreateProgram();
                         {
-                            const ps = c.glCreateShader(c.GL_VERTEX_SHADER);
-                            const fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
+                            var ps = c.glCreateShader(c.GL_VERTEX_SHADER);
+                            var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
 
-                            const ps_code =
+                            var ps_code =
                                 \\attribute vec2 vPosition;
                                 \\varying vec2 uv;
                                 \\void main() {
@@ -482,7 +482,7 @@ pub const AndroidApp = struct {
                                 \\}
                                 \\
                             ;
-                            const fs_code =
+                            var fs_code =
                                 \\varying highp vec2 uv;
                                 \\uniform highp vec2 uPos;
                                 \\uniform highp float uAspect;
@@ -538,10 +538,10 @@ pub const AndroidApp = struct {
 
                         shaded_program = c.glCreateProgram();
                         {
-                            const ps = c.glCreateShader(c.GL_VERTEX_SHADER);
-                            const fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
+                            var ps = c.glCreateShader(c.GL_VERTEX_SHADER);
+                            var fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
 
-                            const ps_code =
+                            var ps_code =
                                 \\#version 100
                                 \\attribute vec3 vPosition;
                                 \\attribute vec3 vNormal;
@@ -553,7 +553,7 @@ pub const AndroidApp = struct {
                                 \\}
                                 \\
                             ;
-                            const fs_code =
+                            var fs_code =
                                 \\#version 100
                                 \\varying highp vec3 normal;
                                 \\void main() {
@@ -893,7 +893,7 @@ const SimpleSynth = struct {
     }
 
     fn audioCallback(stream: audio.StreamLayout, user_data: *anyopaque) void {
-        const synth = @as(*SimpleSynth, @ptrCast(@alignCast(user_data)));
+        var synth = @as(*SimpleSynth, @ptrCast(@alignCast(user_data)));
         std.debug.assert(stream.buffer == .Int16);
 
         for (&synth.oscillators) |*osc| {

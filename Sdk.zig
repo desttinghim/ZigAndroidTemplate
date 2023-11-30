@@ -502,7 +502,7 @@ pub fn createApp(
     resource_dir_step.add(Resource{
         .path = "values/strings.xml",
         // .content = write_xml_step.getFileSource("strings.xml").?,
-        .content = write_xml_step.addCopyFile(.{ .path = "strings.xml" }, ""),
+        .content = write_xml_step.files.items[0].getPath(),
     });
 
     const sdk_version_int = @intFromEnum(app_config.target_version);
@@ -548,8 +548,7 @@ pub fn createApp(
     const unaligned_apk_file = make_unsigned_apk.addOutputFileArg(unaligned_apk_name);
 
     make_unsigned_apk.addArg("-M"); // specify full path to AndroidManifest.xml to include in zip
-    // make_unsigned_apk.addFileSourceArg(manifest_step.getFileSource("AndroidManifest.xml").?);
-    make_unsigned_apk.addFileSourceArg(manifest_step.addCopyFile(.{ .path = "AndroidManifest.xml" }, ""));
+    make_unsigned_apk.addFileSourceArg(manifest_step.files.items[0].getPath());
 
     make_unsigned_apk.addArg("-S"); // directory in which to find resources.  Multiple directories will be scanned and the first match found (left to right) will take precedence
     make_unsigned_apk.addDirectorySourceArg(resource_dir_step.getOutputDirectory());
@@ -926,8 +925,7 @@ fn createLibCFile(sdk: *const Sdk, version: AndroidVersion, folder_name: []const
     try writer.writeAll("gcc_dir=\n");
 
     const step = sdk.b.addWriteFile(fname, contents.items);
-    // return step.getFileSource(fname) orelse unreachable;
-    return step.addCopyFile(.{ .path = fname }, "");
+    return step.files.items[0].getPath();
 }
 
 pub fn compressApk(sdk: Sdk, input_apk_file: []const u8, output_apk_file: []const u8) *Step {
@@ -1152,22 +1150,6 @@ const BuildOptionStep = struct {
                 }
                 return;
             },
-            // std.builtin.Version => {
-            //     out.print(
-            //         \\pub const {}: @import("std").builtin.Version = .{{
-            //         \\    .major = {d},
-            //         \\    .minor = {d},
-            //         \\    .patch = {d},
-            //         \\}};
-            //         \\
-            //     , .{
-            //         std.zig.fmtId(name),
-
-            //         value.major,
-            //         value.minor,
-            //         value.patch,
-            //     }) catch unreachable;
-            // },
             std.SemanticVersion => {
                 out.print(
                     \\pub const {}: @import("std").SemanticVersion = .{{
