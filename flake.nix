@@ -34,7 +34,8 @@
             build-tools-33-0-1
             cmdline-tools-latest
             platform-tools
-            platforms-android-21
+            platforms-android-23
+            platforms-android-33
             ndk-25-1-8937393
           ]);
         };
