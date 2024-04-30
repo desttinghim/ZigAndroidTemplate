@@ -6,7 +6,6 @@
     devshell.url = "github:numtide/devshell";
     flake-utils.url = "github:numtide/flake-utils";
     android.url = "github:tadfisher/android-nixpkgs";
-    zig.url = "github:mitchellh/zig-overlay";
   };
 
   outputs = { self, nixpkgs, devshell, flake-utils, android, zig }:

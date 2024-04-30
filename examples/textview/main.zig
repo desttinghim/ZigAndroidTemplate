@@ -122,7 +122,7 @@ pub const AndroidApp = struct {
     }
 
     pub fn deinit(self: *AndroidApp) void {
-        @atomicStore(bool, &self.running, false, .SeqCst);
+        @atomicStore(bool, &self.running, false, .seq_cst);
         if (self.thread) |thread| {
             thread.join();
             self.thread = null;

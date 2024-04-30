@@ -101,14 +101,14 @@ var recursive_panic = false;
 pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     var logger = LogWriter{ .log_level = android.ANDROID_LOG_ERROR };
 
-    if (@atomicLoad(bool, &recursive_panic, .SeqCst)) {
+    if (@atomicLoad(bool, &recursive_panic, .seq_cst)) {
         logger.writer().print("RECURSIVE PANIC: {s}\n", .{message}) catch {};
         while (true) {
             std.time.sleep(std.time.ns_per_week);
         }
     }
 
-    @atomicStore(bool, &recursive_panic, true, .SeqCst);
+    @atomicStore(bool, &recursive_panic, true, .seq_cst);
 
     logger.writer().print("PANIC: {s}\n", .{message}) catch {};
 
@@ -140,7 +140,7 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usi
 
     logger.writer().writeAll("<-- end of stack trace -->\n") catch {};
 
-    std.os.exit(1);
+    std.posix.exit(1);
 }
 
 const LogWriter = struct {
