@@ -110,7 +110,10 @@ pub fn build(b: *std.Build) !void {
     const push_step = b.step("push", "Push the app to a connected android device");
     const run_step = b.step("run", "Run the app on a connected android device");
 
-    keystore_step.dependOn(sdk.initKeystore(key_store, .{}));
+    keystore_step.dependOn(sdk.initKeystore(key_store, .{
+        .key_algorithm = .EC,
+        .key_size = 256,
+    }));
     push_step.dependOn(app.install());
     run_step.dependOn(app.run());
 }

@@ -466,6 +466,10 @@ pub fn createApp(
             \\<?xml version="1.0" encoding="utf-8" standalone="no"?><manifest xmlns:tools="http://schemas.android.com/tools" xmlns:android="http://schemas.android.com/apk/res/android" package="{s}">
             \\
         , .{app_config.package_name}) catch unreachable;
+        writer.print(
+            \\    <uses-sdk android:minSdkVersion="18" />
+            \\
+        , .{}) catch unreachable;
         for (app_config.permissions) |perm| {
             writer.print(
                 \\    <uses-permission android:name="{s}"/>
@@ -1002,7 +1006,7 @@ pub fn startApp(sdk: Sdk, package_name: []const u8) *Step {
 
 /// Configuration for a signing key.
 pub const KeyConfig = struct {
-    pub const Algorithm = enum { RSA };
+    pub const Algorithm = enum { RSA, DSA, EC };
     key_algorithm: Algorithm = .RSA,
     key_size: u32 = 4096, // bits
     validity: u32 = 10_000, // days
